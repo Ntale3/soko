@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# ─────────────────────────────────────────
+# Environment variables — NEVER commit these
+# ─────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─────────────────────────────────────────
+# Docker
+# ─────────────────────────────────────────
+*.log
+docker-compose.override.yml
+
+# ─────────────────────────────────────────
+# Database
+# ─────────────────────────────────────────
+*.sqlite3
+*.db
+
+# ─────────────────────────────────────────
+# VS Code
+# ─────────────────────────────────────────
+.vscode/
+*.code-workspace
+
+# ─────────────────────────────────────────
+# JetBrains (PyCharm etc.)
+# ─────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+
+# ─────────────────────────────────────────
+# Windows
+# ─────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ─────────────────────────────────────────
+# Mac (for your Linux teammates)
+# ─────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ─────────────────────────────────────────
+# Alembic
+# ─────────────────────────────────────────
+# Keep migrations but ignore local alembic cache
+alembic/versions/__pycache__/
+
+# ─────────────────────────────────────────
+# Misc
+# ─────────────────────────────────────────
+*.bak
+*.swp
+*.tmp
+erl_crash.dump

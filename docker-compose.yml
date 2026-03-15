@@ -1,0 +1,242 @@
+version: "3.9"
+
+networks:
+  agrimarket_net:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  farmer_db_data:
+  buyer_db_data:
+  produce_db_data:
+  recoo_db_data:
+
+
+services:
+
+  # ─────────────────────────────────────────
+  # API GATEWAY (Nginx)
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: api_gateway
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth_service
+      - farmer_service
+      - buyer_service
+      - produce_service
+      - recommendation_service
+    networks:
+      - agrimarket_net
+
+  # ─────────────────────────────────────────
+  # MESSAGE BROKER
+  # ─────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI → http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    # Volume removed intentionally — Windows Docker Desktop causes .erlang.cookie
+    # permission errors (eacces) when mounting volumes into RabbitMQ.
+    # Data won't persist across restarts but that's fine for development.
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # AUTH SERVICE  :8001
+  # ─────────────────────────────────────────
+  auth_db:
+    image: postgres:15-alpine
+    container_name: auth_db
+    environment:
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+      POSTGRES_DB: auth_db
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  auth_service:
+    build: ./services/auth
+    container_name: auth_service
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgresql://auth_user:auth_pass@auth_db:5432/auth_db
+      SECRET_KEY: supersecretkey_change_in_prod
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+    depends_on:
+      auth_db:
+        condition: service_healthy
+    networks:
+      - agrimarket_net
+    restart: on-failure
+
+  # ─────────────────────────────────────────
+  # FARMER SERVICE  :8002
+  # ─────────────────────────────────────────
+  farmer_db:
+    image: postgres:15-alpine
+    container_name: farmer_db
+    environment:
+      POSTGRES_USER: farmer_user
+      POSTGRES_PASSWORD: farmer_pass
+      POSTGRES_DB: farmer_db
+    volumes:
+      - farmer_db_data:/var/lib/postgresql/data
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farmer_user -d farmer_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  farmer_service:
+    build: ./services/farmer   # replicate auth/ structure here
+    container_name: farmer_service
+    ports:
+      - "8002:8002"
+    environment:
+      DATABASE_URL: postgresql://farmer_user:farmer_pass@farmer_db:5432/farmer_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      farmer_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - agrimarket_net
+    restart: on-failure
+
+  # ─────────────────────────────────────────
+  # BUYER SERVICE  :8003
+  # ─────────────────────────────────────────
+  buyer_db:
+    image: postgres:15-alpine
+    container_name: buyer_db
+    environment:
+      POSTGRES_USER: buyer_user
+      POSTGRES_PASSWORD: buyer_pass
+      POSTGRES_DB: buyer_db
+    volumes:
+      - buyer_db_data:/var/lib/postgresql/data
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buyer_user -d buyer_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  buyer_service:
+    build: ./services/buyer
+    container_name: buyer_service
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_URL: postgresql://buyer_user:buyer_pass@buyer_db:5432/buyer_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      buyer_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - agrimarket_net
+    restart: on-failure
+
+  # ─────────────────────────────────────────
+  # PRODUCE SERVICE  :8004
+  # ─────────────────────────────────────────
+  produce_db:
+    image: postgres:15-alpine
+    container_name: produce_db
+    environment:
+      POSTGRES_USER: produce_user
+      POSTGRES_PASSWORD: produce_pass
+      POSTGRES_DB: produce_db
+    volumes:
+      - produce_db_data:/var/lib/postgresql/data
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U produce_user -d produce_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  produce_service:
+    build: ./services/produce
+    container_name: produce_service
+    ports:
+      - "8004:8004"
+    environment:
+      DATABASE_URL: postgresql://produce_user:produce_pass@produce_db:5432/produce_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      produce_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - agrimarket_net
+    restart: on-failure
+
+  # ─────────────────────────────────────────
+  # RECOMMENDATION SERVICE  :8005
+  # ─────────────────────────────────────────
+  recoo_db:
+    image: postgres:15-alpine
+    container_name: recoo_db
+    environment:
+      POSTGRES_USER: recoo_user
+      POSTGRES_PASSWORD: recoo_pass
+      POSTGRES_DB: recoo_db
+    volumes:
+      - recoo_db_data:/var/lib/postgresql/data
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recoo_user -d recoo_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  recommendation_service:
+    build: ./services/recommendation
+    container_name: recommendation_service
+    ports:
+      - "8005:8005"
+    environment:
+      DATABASE_URL: postgresql://recoo_user:recoo_pass@recoo_db:5432/recoo_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      recoo_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - agrimarket_net
+    restart: on-failure
