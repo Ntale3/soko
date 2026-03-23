@@ -3,9 +3,10 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str
-    SECRET_KEY: str
+    RABBITMQ_URL: str = "amqp://guest:guest@rabbitmq:5672/"
+    SECRET_KEY: str = "supersecretkey_change_in_prod"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    FARMER_SERVICE_URL: str = "http://farmer_service:8002"
 
     class Config:
         env_file = ".env"

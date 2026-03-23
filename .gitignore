@@ -87,3 +87,6 @@ alembic/versions/__pycache__/
 *.swp
 *.tmp
 erl_crash.dump
+
+# Claude Code
+.claude/

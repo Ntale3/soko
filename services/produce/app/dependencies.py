@@ -18,14 +18,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
-def require_buyer(token: str = Depends(oauth2_scheme)):
-    user_id, role = get_current_user(token)
-    if role != "buyer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Buyers only")
-    return user_id
-
-
 def require_farmer(token: str = Depends(oauth2_scheme)):
+    """Only farmers can create, edit or delete listings."""
     user_id, role = get_current_user(token)
     if role != "farmer":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Farmers only")

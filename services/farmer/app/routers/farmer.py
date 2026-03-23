@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.farmer import FarmerProfile, Farm
-from app.schemas import FarmerProfileCreate, FarmerProfileUpdate, FarmerProfileOut, FarmCreate, FarmOut
+from app.schemas import FarmerProfileCreate, FarmerProfileUpdate, FarmerProfileOut, FarmerListOut, FarmCreate, FarmOut
 from app.dependencies import require_farmer
 from app.messaging import publish_event
 
@@ -64,6 +64,34 @@ def update_profile(
 
     db.commit()
     db.refresh(profile)
+    return profile
+
+
+# ── GET /farmers — public paginated list ─────────────────────────────
+@router.get("/", response_model=FarmerListOut)
+def list_farmers(
+    district: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    query = db.query(FarmerProfile)
+    if district:
+        query = query.filter(FarmerProfile.district.ilike(f"%{district}%"))
+    total = query.count()
+    profiles = query.order_by(FarmerProfile.created_at.desc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size).all()
+    return {"total": total, "page": page, "page_size": page_size, "results": profiles}
+
+
+# ── GET /farmers/by-user/{user_id} — internal: lookup by auth user_id ─
+@router.get("/by-user/{user_id}", response_model=FarmerProfileOut)
+def get_farmer_by_user_id(user_id: int, db: Session = Depends(get_db)):
+    """Used internally by produce service to retrieve farmer name at listing creation."""
+    profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == user_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Farmer not found")
     return profile
 
 

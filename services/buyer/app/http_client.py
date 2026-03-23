@@ -57,3 +57,20 @@ async def search_produce(
     except httpx.RequestError as e:
         logger.error(f"Failed to reach Produce service: {e}")
         return {"total": 0, "page": page, "page_size": page_size, "results": []}
+
+
+async def reduce_produce_stock(produce_id: int, quantity: float) -> bool:
+    """
+    Called after order is saved — reduces stock on Produce service.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.patch(
+                f"{settings.PRODUCE_SERVICE_URL}/produce/{produce_id}/reduce-stock",
+                json={"quantity": quantity}
+            )
+            return response.status_code == 200
+    except httpx.RequestError as e:
+        logger.error(f"Failed to reduce stock for produce {produce_id}: {e}")
+        return False

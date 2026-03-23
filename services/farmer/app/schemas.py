@@ -44,3 +44,10 @@ class FarmerProfileOut(BaseModel):
     farms: list[FarmOut] = []
 
     model_config = {"from_attributes": True}
+
+
+class FarmerListOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    results: list[FarmerProfileOut]

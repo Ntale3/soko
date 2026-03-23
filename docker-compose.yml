@@ -10,6 +10,7 @@ volumes:
   buyer_db_data:
   produce_db_data:
   recoo_db_data:
+  rabbitmq_data:
 
 
 services:
@@ -45,9 +46,8 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-    # Volume removed intentionally — Windows Docker Desktop causes .erlang.cookie
-    # permission errors (eacces) when mounting volumes into RabbitMQ.
-    # Data won't persist across restarts but that's fine for development.
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - agrimarket_net
     healthcheck:
@@ -158,6 +158,7 @@ services:
     environment:
       DATABASE_URL: postgresql://buyer_user:buyer_pass@buyer_db:5432/buyer_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PRODUCE_SERVICE_URL: http://produce_service:8004
     depends_on:
       buyer_db:
         condition: service_healthy
@@ -195,6 +196,7 @@ services:
     environment:
       DATABASE_URL: postgresql://produce_user:produce_pass@produce_db:5432/produce_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      FARMER_SERVICE_URL: http://farmer_service:8002
     depends_on:
       produce_db:
         condition: service_healthy
@@ -232,6 +234,8 @@ services:
     environment:
       DATABASE_URL: postgresql://recoo_user:recoo_pass@recoo_db:5432/recoo_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      SECRET_KEY: supersecretkey_change_in_prod
+      ALGORITHM: HS256
     depends_on:
       recoo_db:
         condition: service_healthy

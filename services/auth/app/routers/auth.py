@@ -57,3 +57,11 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+# ── POST /auth/refresh ───────────────────────────────────────────────
+@router.post("/refresh", response_model=Token)
+def refresh(current_user: User = Depends(get_current_user)):
+    """Exchange a valid token for a new one with a fresh expiry window."""
+    token = create_access_token({"sub": str(current_user.id), "role": current_user.role.value})
+    return {"access_token": token, "token_type": "bearer"}

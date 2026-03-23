@@ -1,38 +1,27 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from datetime import datetime
-from app.models.user import UserRole
 
 
-# ── Request schemas ──────────────────────────────────────────────────
-class UserRegister(BaseModel):
-    email: EmailStr
-    full_name: str
-    password: str
-    role: UserRole = UserRole.buyer
+class RecommendationItem(BaseModel):
+    produce_id: int
+    farmer_id: int
+    name: str
+    category: str
+    district: str
+    price_per_unit: float
+    unit: str
+    avg_stars: float | None
+    score: float  # 0.0–1.0 relevance score
+    reason: str
 
 
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
+class RecommendationListOut(BaseModel):
+    buyer_id: int
+    total: int
+    results: list[RecommendationItem]
 
 
-# ── Response schemas ─────────────────────────────────────────────────
-class UserOut(BaseModel):
-    id: int
-    email: EmailStr
-    full_name: str
-    role: UserRole
-    is_active: bool
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class TokenData(BaseModel):
-    user_id: int | None = None
-    role: UserRole | None = None
+class ProduceScoreOut(BaseModel):
+    produce_id: int
+    avg_stars: float | None
+    total_reviews: int

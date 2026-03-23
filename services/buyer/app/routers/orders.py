@@ -6,7 +6,7 @@ from app.models.buyer import BuyerProfile
 from app.models.order import Order, OrderStatus
 from app.schemas import OrderCreate, OrderOut, OrderListOut
 from app.dependencies import require_buyer
-from app.http_client import get_produce_listing
+from app.http_client import get_produce_listing, reduce_produce_stock
 from app.messaging import publish_event
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -29,17 +29,26 @@ async def place_order(
         raise HTTPException(status_code=404, detail="Produce listing not found")
     if not listing.get("is_available"):
         raise HTTPException(status_code=400, detail="Produce is no longer available")
-    if listing.get("quantity_kg", 0) < payload.quantity_kg:
+    if listing.get("quantity", 0) < payload.quantity_kg:
         raise HTTPException(
             status_code=400,
-            detail=f"Only {listing['quantity_kg']}kg available, you requested {payload.quantity_kg}kg"
+            detail=f"Only {listing['quantity']}kg available, you requested {payload.quantity_kg}kg"
         )
 
     # 3. Calculate total
-    price_per_kg = listing["price_per_kg"]
+    price_per_kg = listing["price_per_unit"]
     total_price = round(price_per_kg * payload.quantity_kg, 2)
 
-    # 4. Save order with status pending
+    # 4. Reserve stock on Produce service BEFORE saving the order.
+    #    If this fails nothing is committed — state stays clean.
+    stock_reduced = await reduce_produce_stock(payload.produce_id, payload.quantity_kg)
+    if not stock_reduced:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not reserve stock — produce service unavailable, please try again",
+        )
+
+    # 5. Save order only after stock is successfully reserved
     order = Order(
         buyer_id=profile.id,
         produce_id=payload.produce_id,
@@ -53,12 +62,12 @@ async def place_order(
     db.commit()
     db.refresh(order)
 
-    # 5. Publish event so Produce service can update stock
+    # 6. Publish event
     await publish_event("order.placed", {
         "order_id": order.id,
         "produce_id": order.produce_id,
         "farmer_id": order.farmer_id,
-        "buyer_id": profile.id,
+        "buyer_id": user_id,   # auth user_id — matches JWT sub used by recommendation service
         "quantity_kg": order.quantity_kg,
         "total_price": order.total_price,
     })
