@@ -35,6 +35,22 @@ services:
       - agrimarket_net
 
   # ─────────────────────────────────────────
+  # CACHE
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - agrimarket_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────
   # MESSAGE BROKER
   # ─────────────────────────────────────────
   rabbitmq:
@@ -197,12 +213,15 @@ services:
     environment:
       DATABASE_URL: postgresql://produce_user:produce_pass@produce_db:5432/produce_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      REDIS_URL: redis://redis:6379/1
       FARMER_SERVICE_URL: http://farmer_service:8002
       INTERNAL_API_KEY: soko-internal-dev-key
     depends_on:
       produce_db:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - agrimarket_net
@@ -236,12 +255,15 @@ services:
     environment:
       DATABASE_URL: postgresql://recoo_user:recoo_pass@recoo_db:5432/recoo_db
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: supersecretkey_change_in_prod
       ALGORITHM: HS256
     depends_on:
       recoo_db:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - agrimarket_net
