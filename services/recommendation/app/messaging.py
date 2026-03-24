@@ -35,18 +35,21 @@ def _handle_order_placed(data: dict, db: Session):
 
 
 def _handle_quality_scored(data: dict, db: Session):
-    score = QualityScore(
-        produce_id=data["produce_id"],
-        farmer_id=data["farmer_id"],
-        buyer_id=data["buyer_id"],
-        stars=data["stars"],
-    )
-    db.add(score)
-    db.commit()
-    logger.info(f"Stored quality score: produce_id={data['produce_id']} stars={data['stars']}")
-    # Ratings changed — invalidate the score cache and the reviewer's recommendations
-    invalidate_score(data["produce_id"])
-    invalidate_recommendations(data["buyer_id"])
+    try:
+        score = QualityScore(
+            produce_id=data["produce_id"],
+            farmer_id=data["farmer_id"],
+            buyer_id=data["buyer_id"],
+            stars=data["stars"],
+        )
+        db.add(score)
+        db.commit()
+        logger.info(f"Stored quality score: produce_id={data['produce_id']} stars={data['stars']}")
+    finally:
+        # Always invalidate caches when this event arrives — ratings have changed
+        # regardless of whether the DB write succeeded.
+        invalidate_score(data["produce_id"])
+        invalidate_recommendations(data["buyer_id"])
 
 
 def _handle_produce_listed(data: dict, db: Session):

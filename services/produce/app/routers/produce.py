@@ -39,7 +39,11 @@ def get_price_predictions(
     from active listings. The frontend uses this for price prediction cards.
     Results are cached in Redis for 10 minutes per category/district combo.
     """
-    cached = get_cached_predictions(category, district)
+    # Normalise category to a plain string so cache keys and JSON serialisation
+    # are consistent regardless of Python version or SQLAlchemy enum behaviour.
+    category_key: str | None = category.value if category is not None else None
+
+    cached = get_cached_predictions(category_key, district)
     if cached:
         return cached
 
@@ -58,14 +62,14 @@ def get_price_predictions(
 
     results = [
         {
-            "category": cat,
+            "category": cat.value if hasattr(cat, "value") else cat,
             "avg_price_per_kg": round(sum(prices) / len(prices), 2),
             "listing_count": len(prices),
         }
         for cat, prices in buckets.items()
     ]
     data = {"results": results}
-    set_cached_predictions(category, district, data)
+    set_cached_predictions(category_key, district, data)
     return data
 
 
