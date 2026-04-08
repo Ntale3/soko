@@ -2,8 +2,6 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
-
 from app.database import get_db
 from app.models.produce import ProduceListing, ProduceCategory
 from app.schemas import ProduceListingCreate, ProduceListingUpdate, ProduceListingOut, ProduceListOut
@@ -47,7 +45,7 @@ def get_price_predictions(
     if cached:
         return cached
 
-    query = db.query(ProduceListing).filter(ProduceListing.is_available == True)
+    query = db.query(ProduceListing).filter(ProduceListing.is_available)
     if category:
         query = query.filter(ProduceListing.category == category)
     if district:
@@ -57,8 +55,8 @@ def get_price_predictions(
 
     from collections import defaultdict
     buckets: dict = defaultdict(list)
-    for l in listings:
-        buckets[l.category].append(l.price_per_unit)
+    for listing in listings:
+        buckets[listing.category].append(listing.price_per_unit)
 
     results = [
         {
@@ -124,7 +122,7 @@ def get_listings(
     query = db.query(ProduceListing)
 
     if available_only:
-        query = query.filter(ProduceListing.is_available == True)
+        query = query.filter(ProduceListing.is_available)
     if name:
         query = query.filter(ProduceListing.name.ilike(f"%{name}%"))
     if district:

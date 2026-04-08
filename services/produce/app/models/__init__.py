@@ -1,1 +1,1 @@
-from app.models.produce import ProduceListing
+from app.models.produce import ProduceListing as ProduceListing

@@ -5,7 +5,7 @@ from authlib.integrations.starlette_client import OAuth
 from starlette.config import Config as StarletteConfig
 from app.db.session import get_db
 from app.models.user import User, UserRole as DBUserRole, VerificationStatus
-from app.schemas.auth import AuthTokens, AuthenticatedUser, LoginResponse
+from app.schemas.auth import AuthenticatedUser
 from app.core.security import create_access_token
 from app.core.config import settings
 

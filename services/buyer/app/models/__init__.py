@@ -1,3 +1,3 @@
-from app.models.buyer import BuyerProfile
-from app.models.order import Order
-from app.models.review import Review
+from app.models.buyer import BuyerProfile as BuyerProfile
+from app.models.order import Order as Order
+from app.models.review import Review as Review
