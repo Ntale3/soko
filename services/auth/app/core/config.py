@@ -10,12 +10,8 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost/auth/google/callback"
-<<<<<<< HEAD
     FRONTEND_URL: str
     USER_SERVICE_URL: str
-=======
-    FRONTEND_URL: str = "http://localhost:3000"
->>>>>>> 3500cb5 (feat(auth): lower bcrypt rounds, make OAuth config optional, restore refresh endpoint)
 
 
     class Config:

@@ -3,21 +3,11 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import AuthCredential, UserRole as DBUserRole
 from app.core.config import settings
-from app.models.user import AuthCredential, UserRole as DBUserRole
-from app.core.config import settings
 from app.schemas.auth import (
     RegisterPayload, LoginPayload, LoginResponse,
     AuthTokens, AuthUserMinimal,
     VerifyTokenRequest, VerifyTokenResponse,
     ChangePasswordPayload
-    RegisterPayload, LoginPayload, LoginResponse,
-    AuthTokens, AuthUserMinimal,
-    VerifyTokenRequest, VerifyTokenResponse,
-    ChangePasswordPayload
-)
-from app.core.security import (
-    hash_password, verify_password,
-    create_access_token, create_refresh_token, decode_token
 )
 from app.core.security import (
     hash_password, verify_password,
@@ -25,29 +15,22 @@ from app.core.security import (
 )
 from app.core.dependencies import get_current_user
 import httpx
-import httpx
 
 router = APIRouter(tags=["Auth"])
 
-USER_SERVICE_URL = settings.USER_SERVICE_URL
 USER_SERVICE_URL = settings.USER_SERVICE_URL
 
 
 @router.post("/register", response_model=LoginResponse, status_code=201)
 async def register(payload: RegisterPayload, db: Session = Depends(get_db)):
     if db.query(AuthCredential).filter(AuthCredential.email == payload.email).first():
-async def register(payload: RegisterPayload, db: Session = Depends(get_db)):
-    if db.query(AuthCredential).filter(AuthCredential.email == payload.email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
-
-    cred = AuthCredential(
 
     cred = AuthCredential(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role=DBUserRole(payload.role),
     )
-    db.add(cred)
     db.add(cred)
     db.commit()
     db.refresh(cred)
@@ -73,63 +56,13 @@ async def register(payload: RegisterPayload, db: Session = Depends(get_db)):
         tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token),
         user=AuthUserMinimal(id=str(cred.id), email=cred.email, role=cred.role.value)
     )
-    db.refresh(cred)
-
-    # Tell User Service to create a profile shell
-    async with httpx.AsyncClient() as client:
-        await client.post(f"{USER_SERVICE_URL}/users", json={
-            "id": str(cred.id),
-            "email": cred.email,
-            "role": cred.role.value,
-            "name": payload.fullName,
-            "phone" : payload.phone,
-            "district": payload.district,
-            "specialties": payload.specialties,
-            "intrests": payload.interests,
-            "avatar_url": payload.avatar_url
-        })
-
-    access_token = create_access_token(str(cred.id), cred.role.value, cred.email)
-    refresh_token = create_refresh_token(str(cred.id))
-
-    return LoginResponse(
-        tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token),
-        user=AuthUserMinimal(id=str(cred.id), email=cred.email, role=cred.role.value)
-    )
 
 
-@router.post("/login", response_model=LoginResponse)
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginPayload, db: Session = Depends(get_db)):
     cred = db.query(AuthCredential).filter(AuthCredential.email == payload.email).first()
     if not cred or not verify_password(payload.password, cred.hashed_password):
-    cred = db.query(AuthCredential).filter(AuthCredential.email == payload.email).first()
-    if not cred or not verify_password(payload.password, cred.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    if not cred.is_active:
-        raise HTTPException(status_code=403, detail="Account is disabled")
-
-    access_token = create_access_token(str(cred.id), cred.role.value, cred.email)
-    refresh_token = create_refresh_token(str(cred.id))
-
-    return LoginResponse(
-        tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token),
-        user=AuthUserMinimal(id=str(cred.id), email=cred.email, role=cred.role.value)
-    )
-
-
-@router.post("/verify-token", response_model=VerifyTokenResponse)
-def verify_token(payload: VerifyTokenRequest):
-    # This is called by the Gateway only — not the frontend
-    data = decode_token(payload.token)
-    if not data:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return VerifyTokenResponse(
-        valid=True,
-        user_id=data["sub"],
-        role=data["role"],
-        email=data["email"]
-    )
     if not cred.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
@@ -186,12 +119,6 @@ def change_password(
     current_user.hashed_password = hash_password(payload.new_password)
     db.commit()
     return {"message": "Password updated"}
-
-
-@router.post("/refresh")
-def refresh_token(current_user: User = Depends(get_current_user)):
-    token = create_access_token(str(current_user.id), current_user.role.value, current_user.email, current_user.full_name)
-    return {"access_token": token, "token_type": "bearer"}
 
 
 @router.post("/refresh")
