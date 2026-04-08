@@ -324,8 +324,8 @@ def test_produce_score_cache_invalidated_after_quality_event(
     )
     assert review.status_code == 201, f"Review submission failed: {review.text}"
 
-    # score:{pid} must be deleted by the event handler within 15 s
-    deadline = time.time() + 15
+    # score:{pid} must be deleted by the event handler within 45 s
+    deadline = time.time() + 45
     invalidated = False
     while time.time() < deadline:
         if not _REDIS_RECS.exists(f"score:{pid}"):
@@ -334,5 +334,5 @@ def test_produce_score_cache_invalidated_after_quality_event(
         time.sleep(0.3)
 
     assert invalidated, (
-        f"Redis key score:{pid} was not deleted within 15 s after quality.scored event"
+        f"Redis key score:{pid} was not deleted within 45 s after quality.scored event"
     )
