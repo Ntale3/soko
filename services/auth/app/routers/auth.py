@@ -127,6 +127,12 @@ def refresh_token(current_user: User = Depends(get_current_user)):
     return {"access_token": token, "token_type": "bearer"}
 
 
+@router.post("/refresh")
+def refresh_token(current_user: User = Depends(get_current_user)):
+    token = create_access_token(str(current_user.id), current_user.role.value, current_user.email, current_user.full_name)
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @router.get("/health")
 def health():
     return {"status": "ok", "service": "auth"}
