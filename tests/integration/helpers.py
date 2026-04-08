@@ -15,15 +15,19 @@ def auth_headers(token: str) -> dict:
 
 def register_and_login(email: str, password: str, full_name: str, role: str) -> str:
     """Register a user (ignores 409 if already exists) and return a JWT access token."""
+    import hashlib
+    phone_suffix = int(hashlib.md5(email.encode()).hexdigest()[:7], 16) % 9000000 + 1000000
     httpx.post(f"{BASE_URLS['auth']}/auth/register", json={
         "email": email,
-        "full_name": full_name,
+        "fullName": full_name,
         "password": password,
+        "phone": f"+25670{phone_suffix}",
+        "district": "Kampala",
         "role": role,
     })
-    resp = httpx.post(f"{BASE_URLS['auth']}/auth/login", data={
-        "username": email,
+    resp = httpx.post(f"{BASE_URLS['auth']}/auth/login", json={
+        "email": email,
         "password": password,
     })
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    return resp.json()["tokens"]["access_token"]
