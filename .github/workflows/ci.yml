@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint all services
+        run: |
+          ruff check services/auth/app \
+                        services/farmer/app \
+                        services/buyer/app \
+                        services/produce/app \
+                        services/recommendation/app
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start services
+        run: docker compose up --build -d
+        timeout-minutes: 10
+
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for services..."
+          for i in $(seq 1 30); do
+            healthy=$(docker compose ps --format json \
+              | python3 -c "
+import sys, json
+lines = sys.stdin.read().strip().splitlines()
+containers = [json.loads(l) for l in lines if l]
+not_ready = [c['Name'] for c in containers if c.get('Health','') not in ('healthy', '') or c.get('State','') != 'running']
+print(len(not_ready))
+" 2>/dev/null || echo "999")
+            if [ "$healthy" = "0" ]; then
+              echo "All services ready."
+              break
+            fi
+            echo "Attempt $i — waiting 5s..."
+            sleep 5
+          done
+
+      - name: Smoke-check health endpoints
+        run: |
+          curl -sf http://localhost:8001/health
+          curl -sf http://localhost:8002/health
+          curl -sf http://localhost:8003/health
+          curl -sf http://localhost:8004/health
+          curl -sf http://localhost:8005/health
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r tests/integration/requirements.txt
+
+      - name: Run integration tests
+        run: python -m pytest tests/integration/ -v --tb=short
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
