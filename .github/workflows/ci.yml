@@ -44,15 +44,8 @@ jobs:
         run: |
           echo "Waiting for services..."
           for i in $(seq 1 30); do
-            healthy=$(docker compose ps --format json \
-              | python3 -c "
-import sys, json
-lines = sys.stdin.read().strip().splitlines()
-containers = [json.loads(l) for l in lines if l]
-not_ready = [c['Name'] for c in containers if c.get('Health','') not in ('healthy', '') or c.get('State','') != 'running']
-print(len(not_ready))
-" 2>/dev/null || echo "999")
-            if [ "$healthy" = "0" ]; then
+            unhealthy=$(docker compose ps | grep -c "starting\|unhealthy" || true)
+            if [ "$unhealthy" = "0" ]; then
               echo "All services ready."
               break
             fi
