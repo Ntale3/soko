@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import AuthCredential as User
 from app.core.security import decode_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -29,13 +29,3 @@ def get_current_user(
     if not user:
         raise credentials_exception
     return user
-
-def require_farmer(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ("farmer", "both"):
-        raise HTTPException(status_code=403, detail="Farmers only")
-    return current_user
-
-def require_buyer(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ("buyer", "both"):
-        raise HTTPException(status_code=403, detail="Buyers only")
-    return current_user

@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost/auth/google/callback"
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str
+    USER_SERVICE_URL: str
 
 
     class Config:
