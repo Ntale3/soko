@@ -1,25 +1,25 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.database import Base, engine
-from app.routers.auth import router as auth_router
-
+from starlette.middleware.sessions import SessionMiddleware
+from app.db.session import Base, engine
+from app.core.config import settings
+from app.routers import profile, auth, oauth
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all tables on startup
     Base.metadata.create_all(bind=engine)
     yield
 
-
 app = FastAPI(
-    title="AgriMarket – Auth Service",
+    title="Soko Auth Service",
+    description="Authentication & identity for Soko Agrimarket",
     version="1.0.0",
     lifespan=lifespan,
+    root_path="/auth",
 )
 
-app.include_router(auth_router)
+app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)  # ← must be here
 
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "auth"}
+app.include_router(auth.router)
+app.include_router(profile.router)
+app.include_router(oauth.router)

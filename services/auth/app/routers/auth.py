@@ -1,67 +1,89 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from typing import Union
+from app.db.session import get_db
+from app.models.user import User, UserRole as DBUserRole
+from app.schemas.auth import (
+    FarmerRegisterPayload, BuyerRegisterPayload,
+    LoginPayload, AuthTokens, AuthenticatedUser, LoginResponse
+)
+from app.core.security import hash_password, verify_password, create_access_token
+from app.core.dependencies import get_current_user
 
-from app.database import get_db
-from app.models.user import User
-from app.schemas import UserRegister, UserOut, Token
-from app.security import hash_password, verify_password, create_access_token, decode_access_token
-
-router = APIRouter(prefix="/auth", tags=["Auth"])
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
-
-# ── Dependency: get current user from JWT ────────────────────────────
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    token_data = decode_access_token(token)
-    if not token_data:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user = db.query(User).filter(User.id == token_data.user_id).first()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
-    return user
+router = APIRouter(tags=["Auth"])
 
 
-# ── POST /auth/register ──────────────────────────────────────────────
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def register(payload: UserRegister, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == payload.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+def make_initials(name: str) -> str:
+    parts = name.strip().split()
+    return (parts[0][0] + parts[-1][0]).upper() if len(parts) >= 2 else name[:2].upper()
+
+
+def user_to_schema(user: User) -> AuthenticatedUser:
+    return AuthenticatedUser(
+        id=str(user.id),
+        name=user.full_name,
+        initials=make_initials(user.full_name),
+        email=user.email,
+        phone=user.phone or "",
+        avatarUrl=user.avatar_url,
+        district=user.district or "",
+        village=user.village,
+        role=user.role.value,
+        verified=user.verified,
+        verificationStatus=user.verification_status.value,
+        memberSince=user.created_at.isoformat(),
+        farmerBio=user.farmer_bio,
+        farmName=user.farm_name,
+    )
+
+
+@router.post("/register", response_model=LoginResponse, status_code=201)
+def register(
+    payload: Union[FarmerRegisterPayload, BuyerRegisterPayload],
+    db: Session = Depends(get_db)
+):
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    if db.query(User).filter(User.phone == payload.phone).first():
+        raise HTTPException(status_code=409, detail="Phone already registered")
+
+    specialties = None
+    if hasattr(payload, "specialties") and payload.specialties:
+        specialties = ",".join(payload.specialties)
 
     user = User(
+        full_name=payload.fullName,
         email=payload.email,
-        full_name=payload.full_name,
+        phone=payload.phone,
         hashed_password=hash_password(payload.password),
-        role=payload.role,
+        district=payload.district,
+        role=DBUserRole(payload.role),
+        specialties=specialties,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+
+    token = create_access_token(str(user.id), user.role.value, user.email, user.full_name)
+    return LoginResponse(tokens=AuthTokens(access_token=token), user=user_to_schema(user))
 
 
-# ── POST /auth/login ─────────────────────────────────────────────────
-@router.post("/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form.username).first()
-    if not user or not verify_password(form.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+@router.post("/login", response_model=LoginResponse, status_code=200)
+def login(payload: LoginPayload, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user or not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
-    return {"access_token": token, "token_type": "bearer"}
-
-
-# ── GET /auth/me ─────────────────────────────────────────────────────
-@router.get("/me", response_model=UserOut)
-def me(current_user: User = Depends(get_current_user)):
-    return current_user
+    token = create_access_token(str(user.id), user.role.value, user.email, user.full_name)
+    return LoginResponse(tokens=AuthTokens(access_token=token), user=user_to_schema(user))
 
 
-# ── POST /auth/refresh ───────────────────────────────────────────────
-@router.post("/refresh", response_model=Token)
-def refresh(current_user: User = Depends(get_current_user)):
-    """Exchange a valid token for a new one with a fresh expiry window."""
-    token = create_access_token({"sub": str(current_user.id), "role": current_user.role.value})
-    return {"access_token": token, "token_type": "bearer"}
+@router.get("/me", response_model=AuthenticatedUser)
+def get_me(current_user: User = Depends(get_current_user)):
+    return user_to_schema(current_user)
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok", "service": "auth"}
