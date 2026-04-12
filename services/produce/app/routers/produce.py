@@ -2,12 +2,12 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from app.database import get_db
+from services.produce.app.db.database import get_db
 from app.models.produce import ProduceListing, ProduceCategory
 from app.schemas import ProduceListingCreate, ProduceListingUpdate, ProduceListingOut, ProduceListOut
-from app.dependencies import require_farmer
+from services.produce.app.core.dependencies import require_farmer
 from app.messaging import publish_event
-from app.config import settings
+from services.produce.app.core.config import settings
 from app.cache import get_cached_predictions, set_cached_predictions, invalidate_predictions
 
 router = APIRouter(prefix="/produce", tags=["Produce"])

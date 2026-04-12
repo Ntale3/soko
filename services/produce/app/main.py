@@ -2,7 +2,7 @@ import asyncio
 import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.database import Base, engine
+from services.produce.app.db.database import Base, engine
 import app.models
 from app.routers.produce import router as produce_router
 from app.messaging import init_publisher, close_publisher, start_consumer

@@ -2,7 +2,7 @@ import json
 import logging
 import redis
 
-from app.config import settings
+from services.produce.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
