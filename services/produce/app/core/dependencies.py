@@ -1,26 +1,20 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
-from services.produce.app.core.config import settings
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="http://localhost:8001/auth/login")
+from fastapi import Header, HTTPException
+from app.core.config import settings
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        role: str = payload.get("role")
-        if user_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return user_id, role
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+def get_current_user_id(x_user_id: str = Header(...)) -> str:
+    return x_user_id
 
 
-def require_farmer(token: str = Depends(oauth2_scheme)):
-    """Only farmers can create, edit or delete listings."""
-    user_id, role = get_current_user(token)
-    if role != "farmer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Farmers only")
-    return user_id
+def get_current_user_role(x_user_role: str = Header(...)) -> str:
+    return x_user_role
+
+
+def farmer_only(x_user_role: str = Header(...)):
+    if x_user_role not in ("farmer", "both"):
+        raise HTTPException(status_code=403, detail="Only farmers can perform this action")
+
+
+def internal_only(x_internal_secret: str = Header(...)):
+    if x_internal_secret != settings.INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
