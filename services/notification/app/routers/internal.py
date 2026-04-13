@@ -1,169 +1,184 @@
-import uuid
 import logging
+import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 import httpx
 
 from app.core.config import settings
 from app.core.dependencies import internal_only
 from app.db.database import get_db
-from app.helpers.pesapal import submit_order, register_ipn_url
-from services.notification.app.models.notification import Transaction, PaymentStatus, PaymentMethodType
-from services.notification.app.schemas.nofication import InitiatePaymentPayload, InitiatePaymentResponse
+from app.helpers.sms import send_sms
+from app.helpers.push import push_to_user
+from app.helpers.templates import get_template
+from app.models.notification import Notification, NotificationType, NotificationChannel
+from services.notification.app.schemas.notification import NotifyPayload
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Internal"], dependencies=[Depends(internal_only)])
 
-# IPN id — registered once on startup, reused for all orders
-_ipn_id: str | None = None
+# Events that also trigger an SMS
+SMS_EVENTS = {
+    "order_placed",
+    "payment_confirmed",
+    "payment_failed",
+    "order_dispatched",
+}
 
 
-async def get_ipn_id() -> str:
-    global _ipn_id
-    if not _ipn_id:
-        _ipn_id = await register_ipn_url()
-    return _ipn_id
-
-
-async def fetch_buyer_details(buyer_id: str) -> dict:
-    """Fetches buyer name, email and phone from User Service."""
+async def fetch_user(user_id: str) -> dict:
     try:
         async with httpx.AsyncClient() as client:
             res = await client.get(
-                f"{settings.USER_SERVICE_URL}/users/{buyer_id}",
+                f"{settings.USER_SERVICE_URL}/users/{user_id}",
                 headers={"x-internal-secret": settings.INTERNAL_SECRET},
                 timeout=5.0
             )
-            res.raise_for_status()
-            return res.json()
+            if res.status_code == 200:
+                return res.json()
     except Exception as e:
-        logger.error(f"Could not fetch buyer {buyer_id}: {e}")
-        return {}
+        logger.warning(f"Could not fetch user {user_id}: {e}")
+    return {}
 
 
-@router.post("/initiate", response_model=InitiatePaymentResponse)
-async def initiate_payment(
-    payload: InitiatePaymentPayload,
-    db:      Session = Depends(get_db)
+async def deliver_notification(
+    db:          Session,
+    user_id:     str,
+    event:       str,
+    role:        str,        # "buyer" | "farmer" | "recipient"
+    entity_id:   str | None,
+    meta:        dict,
+    send_sms_:   bool = False,
+    phone:       str  = None,
 ):
-    # ── 1. Prevent duplicate transactions for same order
-    existing = db.query(Transaction).filter(
-        Transaction.order_id == uuid.UUID(payload.order_id)
-    ).first()
-    if existing:
-        return InitiatePaymentResponse(
-            transaction_id=str(existing.id),
-            payment_url=existing.pesapal_payment_url,
-            status=existing.status,
-            message="Payment already initiated"
-        )
+    """
+    Creates a DB notification record and attempts real-time delivery.
+    """
+    templates = get_template(event, meta)
+    template  = templates.get(role)
+    if not template:
+        return
 
-    # ── 2. Cash on delivery — no PesaPal needed
-    if payload.payment_method.type == "cash_on_delivery":
-        tx = Transaction(
-            order_id=uuid.UUID(payload.order_id),
-            buyer_id=uuid.UUID(payload.buyer_id),
-            amount=payload.amount,
-            currency=payload.currency,
-            payment_method_type=PaymentMethodType.cash_on_delivery,
-            status=PaymentStatus.pending,
-        )
-        db.add(tx)
+    # ── Save in-app notification
+    notif = Notification(
+        user_id=uuid.UUID(user_id),
+        type=NotificationType(event),
+        channel=NotificationChannel.in_app,
+        title=template.title,
+        body=template.body,
+        entity_type=template.entity_type,
+        entity_id=entity_id,
+        is_read=False,
+        sent=True,
+        sent_at=datetime.utcnow(),
+    )
+    db.add(notif)
+    db.commit()
+
+    # ── Real-time push (WebSocket)
+    await push_to_user(user_id, {
+        "id":         str(notif.id),
+        "type":       event,
+        "title":      template.title,
+        "body":       template.body,
+        "entityType": template.entity_type,
+        "entityId":   entity_id,
+        "createdAt":  notif.created_at.isoformat(),
+    })
+
+    # ── SMS for important events
+    if send_sms_ and phone and event in SMS_EVENTS:
+        db.add(Notification(
+            user_id=uuid.UUID(user_id),
+            type=NotificationType(event),
+            channel=NotificationChannel.sms,
+            title=template.title,
+            body=template.body,
+            entity_type=template.entity_type,
+            entity_id=entity_id,
+            sent=send_sms(phone, template.body),
+            sent_at=datetime.utcnow(),
+        ))
         db.commit()
 
-        # Immediately confirm COD orders — payment happens on delivery
-        await confirm_order_with_service(payload.order_id, str(tx.id), None)
 
-        return InitiatePaymentResponse(
-            transaction_id=str(tx.id),
-            payment_url=None,
-            status=PaymentStatus.pending,
-            message="Cash on delivery order confirmed"
+@router.post("/notify")
+async def notify(payload: NotifyPayload, db: Session = Depends(get_db)):
+    """
+    Central notification dispatcher.
+    Any service posts here with an event and relevant IDs.
+    """
+    event = payload.event
+    meta  = payload.meta or {}
+
+    # ── Order events — notify buyer and/or farmer
+    if payload.order_id:
+        meta["order_ref"] = f"#{payload.order_id[:8].upper()}"
+
+    if payload.buyer_id:
+        buyer = await fetch_user(payload.buyer_id)
+        meta.update({
+            "product": meta.get("product", "your order"),
+        })
+        await deliver_notification(
+            db=db,
+            user_id=payload.buyer_id,
+            event=event,
+            role="buyer",
+            entity_id=payload.order_id,
+            meta=meta,
+            send_sms_=True,
+            phone=buyer.get("phone"),
         )
 
-    # ── 3. Online payment — submit to PesaPal
-    buyer   = await fetch_buyer_details(payload.buyer_id)
-    ipn_id  = await get_ipn_id()
-
-    # merchant_ref must be unique per order
-    merchant_ref = f"SOKO-{payload.order_id[:8].upper()}"
-
-    try:
-        pesapal_res = await submit_order(
-            merchant_ref=merchant_ref,
-            amount=payload.amount,
-            currency=payload.currency,
-            description=payload.description,
-            buyer_email=buyer.get("email", ""),
-            buyer_phone=buyer.get("phone", ""),
-            buyer_name=buyer.get("name", "Customer"),
-            ipn_id=ipn_id,
-            callback_url=f"{settings.PESAPAL_CALLBACK_URL}?order_id={payload.order_id}",
+    if payload.farmer_id:
+        farmer = await fetch_user(payload.farmer_id)
+        await deliver_notification(
+            db=db,
+            user_id=payload.farmer_id,
+            event=event,
+            role="farmer",
+            entity_id=payload.order_id,
+            meta=meta,
+            send_sms_=False,    # farmers get push only — not SMS for every order
+            phone=farmer.get("phone"),
         )
-    except Exception as e:
-        logger.error(f"PesaPal submission failed for order {payload.order_id}: {e}")
-        raise HTTPException(status_code=502, detail="Payment gateway unavailable")
 
-    # ── 4. Save transaction record
-    tx = Transaction(
-        order_id=uuid.UUID(payload.order_id),
-        buyer_id=uuid.UUID(payload.buyer_id),
-        amount=payload.amount,
-        currency=payload.currency,
-        payment_method_type=PaymentMethodType(payload.payment_method.type),
-        payment_provider=payload.payment_method.provider,
-        payment_phone=payload.payment_method.phoneNumber,
-        status=PaymentStatus.pending,
-        pesapal_order_tracking_id=pesapal_res.get("order_tracking_id"),
-        pesapal_merchant_ref=merchant_ref,
-        pesapal_payment_url=pesapal_res.get("redirect_url"),
-        pesapal_ipn_id=ipn_id,
-    )
-    db.add(tx)
-    db.commit()
-    db.refresh(tx)
+    # ── Message notification
+    if event == "new_message" and payload.actor_id:
+        meta["actor_name"] = payload.actor_name or "Someone"
+        await deliver_notification(
+            db=db,
+            user_id=payload.actor_id,
+            event=event,
+            role="recipient",
+            entity_id=payload.message_id,
+            meta=meta,
+        )
 
-    return InitiatePaymentResponse(
-        transaction_id=str(tx.id),
-        payment_url=tx.pesapal_payment_url,
-        status=PaymentStatus.pending,
-        message="Redirect buyer to payment_url to complete payment"
-    )
+    # ── Review notification — tell farmer
+    if event == "new_review" and payload.farmer_id:
+        meta["actor_name"] = payload.actor_name or "A buyer"
+        await deliver_notification(
+            db=db,
+            user_id=payload.farmer_id,
+            event=event,
+            role="farmer",
+            entity_id=payload.order_id,
+            meta=meta,
+        )
 
+    # ── Follow notification — tell farmer
+    if event == "new_follower" and payload.farmer_id:
+        meta["actor_name"] = payload.actor_name or "Someone"
+        await deliver_notification(
+            db=db,
+            user_id=payload.farmer_id,
+            event=event,
+            role="farmer",
+            entity_id=payload.actor_id,
+            meta=meta,
+        )
 
-async def confirm_order_with_service(
-    order_id:          str,
-    transaction_id:    str,
-    payment_reference: str | None
-):
-    """Tells Order Service that payment is confirmed."""
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{settings.ORDER_SERVICE_URL}/internal/payment/confirmed",
-                json={
-                    "order_id":          order_id,
-                    "payment_reference": payment_reference or transaction_id,
-                    "paid_at":           datetime.utcnow().isoformat(),
-                },
-                headers={"x-internal-secret": settings.INTERNAL_SECRET},
-                timeout=5.0
-            )
-    except Exception as e:
-        logger.error(f"Could not confirm order {order_id} with Order Service: {e}")
-
-
-async def fail_order_with_service(order_id: str, reason: str):
-    """Tells Order Service that payment failed."""
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{settings.ORDER_SERVICE_URL}/internal/payment/failed",
-                json={"order_id": order_id, "reason": reason},
-                headers={"x-internal-secret": settings.INTERNAL_SECRET},
-                timeout=5.0
-            )
-    except Exception as e:
-        logger.error(f"Could not fail order {order_id} with Order Service: {e}")
+    return {"dispatched": True}
