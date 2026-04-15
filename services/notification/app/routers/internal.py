@@ -6,24 +6,24 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 import httpx
 
-from app.core.config import settings
-from app.core.dependencies import internal_only
+from app.config.config import settings
+from app.config.dependencies import internal_only
 from app.db.database import get_db
+from app.helpers.templates import get_template
 from app.helpers.sms import send_sms
 from app.helpers.push import push_to_user
-from app.helpers.templates import get_template
 from app.models.notification import Notification, NotificationType, NotificationChannel
-from services.notification.app.schemas.notification import NotifyPayload
+from app.schemas.schemas import NotifyPayload
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Internal"], dependencies=[Depends(internal_only)])
 
-# Events that also trigger an SMS
 SMS_EVENTS = {
     "order_placed",
     "payment_confirmed",
     "payment_failed",
     "order_dispatched",
+    "system",
 }
 
 
@@ -42,25 +42,22 @@ async def fetch_user(user_id: str) -> dict:
     return {}
 
 
-async def deliver_notification(
-    db:          Session,
-    user_id:     str,
-    event:       str,
-    role:        str,        # "buyer" | "farmer" | "recipient"
-    entity_id:   str | None,
-    meta:        dict,
-    send_sms_:   bool = False,
-    phone:       str  = None,
+async def deliver(
+    db:        Session,
+    user_id:   str,
+    event:     str,
+    role:      str,
+    entity_id: str | None,
+    meta:      dict,
+    do_sms:    bool = False,
+    phone:     str  = None,
 ):
-    """
-    Creates a DB notification record and attempts real-time delivery.
-    """
-    templates = get_template(event, meta)
-    template  = templates.get(role)
+    template = get_template(event, role, meta)
     if not template:
+        logger.warning(f"No template for event={event} role={role}")
         return
 
-    # ── Save in-app notification
+    # ── In-app notification
     notif = Notification(
         user_id=uuid.UUID(user_id),
         type=NotificationType(event),
@@ -76,7 +73,7 @@ async def deliver_notification(
     db.add(notif)
     db.commit()
 
-    # ── Real-time push (WebSocket)
+    # ── Real-time push
     await push_to_user(user_id, {
         "id":         str(notif.id),
         "type":       event,
@@ -88,7 +85,8 @@ async def deliver_notification(
     })
 
     # ── SMS for important events
-    if send_sms_ and phone and event in SMS_EVENTS:
+    if do_sms and phone and event in SMS_EVENTS:
+        sms_sent = send_sms(phone, template.body)
         db.add(Notification(
             user_id=uuid.UUID(user_id),
             type=NotificationType(event),
@@ -97,7 +95,7 @@ async def deliver_notification(
             body=template.body,
             entity_type=template.entity_type,
             entity_id=entity_id,
-            sent=send_sms(phone, template.body),
+            sent=sms_sent,
             sent_at=datetime.utcnow(),
         ))
         db.commit()
@@ -105,50 +103,45 @@ async def deliver_notification(
 
 @router.post("/notify")
 async def notify(payload: NotifyPayload, db: Session = Depends(get_db)):
-    """
-    Central notification dispatcher.
-    Any service posts here with an event and relevant IDs.
-    """
     event = payload.event
     meta  = payload.meta or {}
 
-    # ── Order events — notify buyer and/or farmer
     if payload.order_id:
         meta["order_ref"] = f"#{payload.order_id[:8].upper()}"
 
+    # ── Buyer notifications
     if payload.buyer_id:
         buyer = await fetch_user(payload.buyer_id)
-        meta.update({
-            "product": meta.get("product", "your order"),
-        })
-        await deliver_notification(
+        await deliver(
             db=db,
             user_id=payload.buyer_id,
             event=event,
             role="buyer",
             entity_id=payload.order_id,
             meta=meta,
-            send_sms_=True,
+            do_sms=True,
             phone=buyer.get("phone"),
         )
 
-    if payload.farmer_id:
-        farmer = await fetch_user(payload.farmer_id)
-        await deliver_notification(
+    # ── Farmer notifications
+    if payload.farmer_id and event in (
+        "order_placed", "payment_confirmed",
+        "order_cancelled", "new_review", "new_follower"
+    ):
+        await deliver(
             db=db,
             user_id=payload.farmer_id,
             event=event,
             role="farmer",
             entity_id=payload.order_id,
             meta=meta,
-            send_sms_=False,    # farmers get push only — not SMS for every order
-            phone=farmer.get("phone"),
+            do_sms=False,
         )
 
-    # ── Message notification
+    # ── Direct message notification
     if event == "new_message" and payload.actor_id:
         meta["actor_name"] = payload.actor_name or "Someone"
-        await deliver_notification(
+        await deliver(
             db=db,
             user_id=payload.actor_id,
             event=event,
@@ -157,28 +150,20 @@ async def notify(payload: NotifyPayload, db: Session = Depends(get_db)):
             meta=meta,
         )
 
-    # ── Review notification — tell farmer
-    if event == "new_review" and payload.farmer_id:
-        meta["actor_name"] = payload.actor_name or "A buyer"
-        await deliver_notification(
-            db=db,
-            user_id=payload.farmer_id,
-            event=event,
-            role="farmer",
-            entity_id=payload.order_id,
-            meta=meta,
-        )
-
-    # ── Follow notification — tell farmer
-    if event == "new_follower" and payload.farmer_id:
-        meta["actor_name"] = payload.actor_name or "Someone"
-        await deliver_notification(
-            db=db,
-            user_id=payload.farmer_id,
-            event=event,
-            role="farmer",
-            entity_id=payload.actor_id,
-            meta=meta,
-        )
+    # ── System notification (used by USSD welcome SMS)
+    if event == "system":
+        target_id = payload.buyer_id or payload.farmer_id or payload.actor_id
+        if target_id:
+            user = await fetch_user(target_id)
+            await deliver(
+                db=db,
+                user_id=target_id,
+                event="system",
+                role="user",
+                entity_id=None,
+                meta=meta,
+                do_sms=True,
+                phone=user.get("phone"),
+            )
 
     return {"dispatched": True}
