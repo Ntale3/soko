@@ -2,13 +2,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-    RABBITMQ_URL: str = "amqp://guest:guest@rabbitmq:5672/"
-    SECRET_KEY: str = "supersecretkey_change_in_prod"
-    ALGORITHM: str = "HS256"
-    # Internal service URLs — using Docker service names as hostnames
-    PRODUCE_SERVICE_URL: str = "http://produce_service:8004"
-    INTERNAL_API_KEY: str = "soko-internal-dev-key"
+    DATABASE_URL:             str
+    INTERNAL_SECRET:          str
+    USER_SERVICE_URL:         str = "http://user-service:8002"
+    PRODUCE_SERVICE_URL:      str = "http://produce-service:8003"
+    NOTIFICATION_SERVICE_URL: str = "http://notification-service:8008"
 
     class Config:
         env_file = ".env"
