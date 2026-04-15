@@ -1,92 +1,177 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import Union
 from app.db.session import get_db
-from app.models.user import User, UserRole as DBUserRole
+from app.models.user import AuthCredential, UserRole as DBUserRole
+from app.core.config import settings
 from app.schemas.auth import (
-    FarmerRegisterPayload, BuyerRegisterPayload,
-    LoginPayload, AuthTokens, AuthenticatedUser, LoginResponse
+    RegisterPayload, LoginPayload, LoginResponse,
+    AuthTokens, AuthUserMinimal,
+    VerifyTokenRequest, VerifyTokenResponse,
+    ChangePasswordPayload
 )
-from app.core.security import hash_password, verify_password, create_access_token
+from app.core.security import (
+    hash_password, verify_password,
+    create_access_token, create_refresh_token, decode_token
+)
 from app.core.dependencies import get_current_user
+import httpx
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Auth"])
 
 
-def make_initials(name: str) -> str:
-    parts = name.strip().split()
-    return (parts[0][0] + parts[-1][0]).upper() if len(parts) >= 2 else name[:2].upper()
-
-
-def user_to_schema(user: User) -> AuthenticatedUser:
-    return AuthenticatedUser(
-        id=str(user.id),
-        name=user.full_name,
-        initials=make_initials(user.full_name),
-        email=user.email,
-        phone=user.phone or "",
-        avatarUrl=user.avatar_url,
-        district=user.district or "",
-        village=user.village,
-        role=user.role.value,
-        verified=user.verified,
-        verificationStatus=user.verification_status.value,
-        memberSince=user.created_at.isoformat(),
-        farmerBio=user.farmer_bio,
-        farmName=user.farm_name,
-    )
-
-
 @router.post("/register", response_model=LoginResponse, status_code=201)
-def register(
-    payload: Union[FarmerRegisterPayload, BuyerRegisterPayload],
-    db: Session = Depends(get_db)
-):
-    if db.query(User).filter(User.email == payload.email).first():
+async def register(payload: RegisterPayload, db: Session = Depends(get_db)):
+
+    # ── 1. Check for existing email
+    if db.query(AuthCredential).filter(AuthCredential.email == payload.email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
-    if db.query(User).filter(User.phone == payload.phone).first():
-        raise HTTPException(status_code=409, detail="Phone already registered")
 
-    specialties = None
-    if hasattr(payload, "specialties") and payload.specialties:
-        specialties = ",".join(payload.specialties)
-
-    user = User(
-        full_name=payload.fullName,
+    # ── 2. Create credentials but don't commit yet
+    cred = AuthCredential(
         email=payload.email,
-        phone=payload.phone,
         hashed_password=hash_password(payload.password),
-        district=payload.district,
         role=DBUserRole(payload.role),
-        specialties=specialties,
+        oauth_provider=None,
+        is_active=True,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    db.add(cred)
+    db.flush()   # assigns cred.id without committing
 
-    token = create_access_token(str(user.id), user.role.value, user.email, user.full_name)
-    return LoginResponse(tokens=AuthTokens(access_token=token), user=user_to_schema(user))
+    # ── 3. Create profile in User Service — rollback if it fails
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"{settings.USER_SERVICE_URL}/users",
+                json={
+                    "id":          str(cred.id),
+                    "email":       cred.email,
+                    "role":        cred.role.value,
+                    "full_name":   payload.fullName,
+                    "phone":       payload.phone or None,
+                    "district":    payload.district or None,
+                    "avatar_url":  payload.avatar_url or None,
+                    "specialties": payload.specialties or None,
+                    "interests":   payload.interests or None,
+                },
+                headers={"x-internal-secret": settings.INTERNAL_SECRET},
+                timeout=5.0
+            )
+            res.raise_for_status()
+
+        db.commit()
+        db.refresh(cred)
+
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        logger.error(f"User Service call failed during register: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Could not create user profile. Please try again."
+        )
+
+    # ── 4. Issue tokens
+    access_token  = create_access_token(str(cred.id), cred.role.value, cred.email)
+    refresh_token = create_refresh_token(str(cred.id))
+
+    return LoginResponse(
+        tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token),
+        user=AuthUserMinimal(id=str(cred.id), email=cred.email, role=cred.role.value)
+    )
 
 
-@router.post("/login", response_model=LoginResponse, status_code=200)
+@router.post("/login", response_model=LoginResponse)
 def login(payload: LoginPayload, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    cred = db.query(AuthCredential).filter(AuthCredential.email == payload.email).first()
+
+    # ── Block OAuth users from password login
+    if cred and cred.oauth_provider:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This account uses {cred.oauth_provider.title()} sign-in. Please use that instead."
+        )
+
+    if not cred or not verify_password(payload.password, cred.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = create_access_token(str(user.id), user.role.value, user.email, user.full_name)
-    return LoginResponse(tokens=AuthTokens(access_token=token), user=user_to_schema(user))
+    if not cred.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
+
+    access_token  = create_access_token(str(cred.id), cred.role.value, cred.email)
+    refresh_token = create_refresh_token(str(cred.id))
+
+    return LoginResponse(
+        tokens=AuthTokens(access_token=access_token, refresh_token=refresh_token),
+        user=AuthUserMinimal(id=str(cred.id), email=cred.email, role=cred.role.value)
+    )
 
 
-@router.get("/me", response_model=AuthenticatedUser)
-def get_me(current_user: User = Depends(get_current_user)):
-    return user_to_schema(current_user)
+@router.post("/verify-token", response_model=VerifyTokenResponse)
+def verify_token(payload: VerifyTokenRequest):
+    """Called by the Gateway only — not the frontend."""
+    data = decode_token(payload.token, token_type="access")
+    if not data:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return VerifyTokenResponse(
+        valid=True,
+        user_id=data["sub"],
+        role=data["role"],
+        email=data["email"]
+    )
 
 
-@router.post("/refresh")
-def refresh_token(current_user: User = Depends(get_current_user)):
-    token = create_access_token(str(current_user.id), current_user.role.value, current_user.email, current_user.full_name)
-    return {"access_token": token, "token_type": "bearer"}
+@router.post("/refresh", response_model=AuthTokens)
+def refresh(payload: VerifyTokenRequest, db: Session = Depends(get_db)):
+    """Issues a new access token from a valid refresh token."""
+
+    # ── Must be a refresh token specifically — not an access token
+    data = decode_token(payload.token, token_type="refresh")
+    if not data:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    user = db.query(AuthCredential).filter(
+        AuthCredential.id == data["sub"]
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
+
+    return AuthTokens(
+        access_token=create_access_token(str(user.id), user.role.value, user.email),  
+        refresh_token=create_refresh_token(str(user.id))
+    )
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordPayload,
+    current_user: AuthCredential = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # ── OAuth users have no password
+    if current_user.oauth_provider:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth accounts don't have a password. Use your Google account to sign in."
+        )
+
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+    return {"message": "Password updated"}
+
+
+@router.post("/logout")
+def logout():
+    """
+    With stateless JWT the client just drops the token.
+    If you add a Redis blacklist later, invalidate the token here.
+    """
+    return {"message": "Logged out successfully"}
 
 
 @router.get("/health")
