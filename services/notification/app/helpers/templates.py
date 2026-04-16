@@ -9,22 +9,17 @@ class NotificationTemplate:
     entity_type: Optional[str] = None
 
 
-def get_template(event: str, meta: dict = {}) -> dict:
-    """
-    Returns { title, body, entity_type } for a given event.
-    meta dict carries dynamic values like order_id, name etc.
-    """
+def get_template(event: str, role: str, meta: dict = {}) -> Optional[NotificationTemplate]:
     order_ref  = meta.get("order_ref",  "your order")
     actor_name = meta.get("actor_name", "Someone")
     product    = meta.get("product",    "your product")
+    message    = meta.get("message",    "")
 
     templates = {
-
-        # ── Buyer notifications
         "order_placed": {
             "buyer": NotificationTemplate(
                 title="Order placed!",
-                body=f"Your order {order_ref} has been placed. Waiting for payment confirmation.",
+                body=f"Your order {order_ref} has been placed successfully.",
                 entity_type="order",
             ),
             "farmer": NotificationTemplate(
@@ -33,11 +28,10 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="order",
             ),
         },
-
         "payment_confirmed": {
             "buyer": NotificationTemplate(
                 title="Payment confirmed",
-                body=f"Payment for order {order_ref} was successful. Your farmer will prepare your order.",
+                body=f"Payment for order {order_ref} was successful.",
                 entity_type="order",
             ),
             "farmer": NotificationTemplate(
@@ -46,7 +40,6 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="order",
             ),
         },
-
         "payment_failed": {
             "buyer": NotificationTemplate(
                 title="Payment failed",
@@ -54,15 +47,13 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="order",
             ),
         },
-
         "order_dispatched": {
             "buyer": NotificationTemplate(
                 title="Order on the way!",
-                body=f"Your order {order_ref} has been dispatched and is on its way to you.",
+                body=f"Your order {order_ref} has been dispatched.",
                 entity_type="order",
             ),
         },
-
         "order_delivered": {
             "buyer": NotificationTemplate(
                 title="Order delivered",
@@ -70,7 +61,6 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="order",
             ),
         },
-
         "order_cancelled": {
             "buyer": NotificationTemplate(
                 title="Order cancelled",
@@ -79,11 +69,10 @@ def get_template(event: str, meta: dict = {}) -> dict:
             ),
             "farmer": NotificationTemplate(
                 title="Order cancelled",
-                body=f"Order {order_ref} for {product} was cancelled by the buyer.",
+                body=f"Order {order_ref} for {product} was cancelled.",
                 entity_type="order",
             ),
         },
-
         "new_message": {
             "recipient": NotificationTemplate(
                 title=f"New message from {actor_name}",
@@ -91,7 +80,6 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="message",
             ),
         },
-
         "new_review": {
             "farmer": NotificationTemplate(
                 title="New review on your listing",
@@ -99,7 +87,6 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="listing",
             ),
         },
-
         "new_follower": {
             "farmer": NotificationTemplate(
                 title="New follower",
@@ -107,6 +94,14 @@ def get_template(event: str, meta: dict = {}) -> dict:
                 entity_type="profile",
             ),
         },
+        "system": {
+            "user": NotificationTemplate(
+                title="Soko",
+                body=message or "Welcome to Soko!",
+                entity_type=None,
+            ),
+        },
     }
 
-    return templates.get(event, {})
+    event_templates = templates.get(event, {})
+    return event_templates.get(role)
