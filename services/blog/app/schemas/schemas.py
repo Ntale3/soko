@@ -1,170 +1,122 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
 from enum import Enum
 
 
-class UserRole(str, Enum):
-    buyer  = "buyer"
-    farmer = "farmer"
-    both   = "both"
-    admin  = "admin"
+class PostCategory(str, Enum):
+    soil_crops     = "Soil & Crops"
+    livestock      = "Livestock"
+    agritech       = "AgriTech"
+    sustainability = "Sustainability"
+    business       = "Business"
+    irrigation     = "Irrigation"
+    climate        = "Climate"
+    other          = "Other"
 
 
-class VerificationStatus(str, Enum):
-    unverified = "unverified"
-    pending    = "pending"
-    verified   = "verified"
-    rejected   = "rejected"
+class PostSectionType(str, Enum):
+    paragraph = "paragraph"
+    heading   = "heading"
+    quote     = "quote"
+    image     = "image"
 
 
-# ── Called by Auth Service on register (internal)
-class CreateUserPayload(BaseModel):
-    id:           str
-    email:        EmailStr
-    role:         UserRole
-    full_name:    str
-    phone:        str
-    district:     str
-    avatar_url:   Optional[str] = None
-    specialties:  Optional[List[str]] = None
-    interests:    Optional[List[str]] = None
+# ── PostSection — matches PostSection in frontend exactly
+class PostSectionIn(BaseModel):
+    type:        PostSectionType
+    content:     str
+    caption:     Optional[str] = None
+    attribution: Optional[str] = None
 
 
-# ── AuthenticatedUser — full private profile (GET /users/me)
-class AuthenticatedUser(BaseModel):
-    id:                 str
-    name:               str
-    initials:           str
-    email:              str
-    phone:              str
-    avatarUrl:          Optional[str]
-    district:           str
-    village:            Optional[str]
-    role:               UserRole
-    verified:           bool
-    verificationStatus: VerificationStatus
-    memberSince:        str
-    # Farmer-specific
-    farmerBio:          Optional[str]
-    farmName:           Optional[str]
-    # Buyer stats
-    totalOrders:        Optional[int]
-    totalSpent:         Optional[int]
-    wishlistCount:      Optional[int]
-    # Farmer stats
-    totalListings:      Optional[int]
-    totalSales:         Optional[int]
-    totalEarned:        Optional[int]
-    pendingPayout:      Optional[int]
-    averageRating:      Optional[float]
-    totalReviews:       Optional[int]
+class PostSectionOut(BaseModel):
+    type:        str
+    content:     str
+    caption:     Optional[str] = None
+    attribution: Optional[str] = None
 
 
-# ── FarmerProfile — public view (GET /users/{id})
-class FarmerProfile(BaseModel):
+# ── Post — matches Post type in frontend exactly
+class PostOut(BaseModel):
     id:             str
-    name:           str
-    initials:       str
-    avatarUrl:      Optional[str]
-    district:       str
-    village:        Optional[str]
-    verified:       bool
-    farmerBio:      Optional[str]
-    farmName:       Optional[str]
-    memberSince:    str
-    totalListings:  int
-    totalSales:     int
-    averageRating:  float
-    totalReviews:   int
-    responseTime:   Optional[str]
-    # Viewer-relative flags
-    isFollowedByMe: Optional[bool] = None
-    isRatedByMe:    Optional[int]  = None   # 1–5 or null
+    slug:           str
+    image:          str
+    category:       str
+    title:          str
+    excerpt:        str
+    author:         str
+    authorInitials: Optional[str] = None
+    authorBio:      Optional[str] = None
+    likes:          int
+    comments:       int
+    readTime:       str
+    publishedAt:    str
+    isLikedByMe:    Optional[bool] = None
+    tags:           Optional[List[str]] = None
+    # body only populated on single post fetch
+    body:           Optional[List[PostSectionOut]] = None
 
 
-# ── FarmerReview
-class FarmerReviewOut(BaseModel):
-    id:               str
-    reviewerId:       str
-    reviewerName:     str
-    reviewerInitials: str
-    rating:           int
-    body:             str
-    createdAt:        str
-    helpful:          int
-    isHelpfulByMe:    Optional[bool] = None
+# ── Comment — matches Comment in frontend exactly
+class CommentOut(BaseModel):
+    id:             str
+    postId:         str
+    author:         str
+    authorInitials: str
+    body:           str
+    likes:          int
+    isLikedByMe:    bool
+    createdAt:      str
 
 
-class CreateReviewPayload(BaseModel):
-    rating: int
-    body:   str
+# ── Create post
+class CreatePostPayload(BaseModel):
+    title:    str
+    excerpt:  str
+    image:    Optional[str]       = None
+    category: PostCategory
+    tags:     Optional[List[str]] = []
+    body:     List[PostSectionIn]
 
-    @field_validator("rating")
+    @field_validator("title")
     @classmethod
-    def valid_rating(cls, v):
-        if not 1 <= v <= 5:
-            raise ValueError("Rating must be between 1 and 5")
+    def title_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("Title cannot be empty")
+        return v.strip()
+
+    @field_validator("body")
+    @classmethod
+    def must_have_body(cls, v):
+        if not v:
+            raise ValueError("Post must have at least one section")
+        return v
+
+    @field_validator("tags")
+    @classmethod
+    def max_tags(cls, v):
+        if v and len(v) > 10:
+            raise ValueError("Maximum 10 tags allowed")
         return v
 
 
-# ── Profile update
-class UpdateProfile(BaseModel):
-    fullName:    Optional[str]       = None
-    phone:       Optional[str]       = None
-    district:    Optional[str]       = None
-    village:     Optional[str]       = None
-    avatarUrl:   Optional[str]       = None
-    farmerBio:   Optional[str]       = None
-    farmName:    Optional[str]       = None
-    specialties: Optional[List[str]] = None
-    interests:   Optional[List[str]] = None
+# ── Update post
+class UpdatePostPayload(BaseModel):
+    title:    Optional[str]             = None
+    excerpt:  Optional[str]             = None
+    image:    Optional[str]             = None
+    category: Optional[PostCategory]   = None
+    tags:     Optional[List[str]]       = None
+    body:     Optional[List[PostSectionIn]] = None
 
-    @field_validator("specialties")
+
+# ── Create comment
+class CreateCommentPayload(BaseModel):
+    body: str
+
+    @field_validator("body")
     @classmethod
-    def max_specialties(cls, v):
-        if v and len(v) > 3:
-            raise ValueError("Maximum 3 specialties allowed")
-        return v
-
-    @field_validator("interests")
-    @classmethod
-    def max_interests(cls, v):
-        if v and len(v) > 3:
-            raise ValueError("Maximum 3 interests allowed")
-        return v
-
-
-# ── Settings
-class UserSettingsOut(BaseModel):
-    theme:               str
-    notificationsEmail:  bool
-    notificationsSms:    bool
-    notificationsPush:   bool
-    language:            str
-    currency:            str
-
-
-class UpdateSettings(BaseModel):
-    theme:               Optional[str]  = None
-    notificationsEmail:  Optional[bool] = None
-    notificationsSms:    Optional[bool] = None
-    notificationsPush:   Optional[bool] = None
-    language:            Optional[str]  = None   # en | lg | sw
-    currency:            Optional[str]  = None
-
-
-# ── Internal stats update — called by Order Service
-class UpdateFarmerStats(BaseModel):
-    total_listings: Optional[int]   = None
-    total_sales:    Optional[int]   = None
-    total_earned:   Optional[int]   = None
-    pending_payout: Optional[int]   = None
-    average_rating: Optional[float] = None
-    total_reviews:  Optional[int]   = None
-    response_time:  Optional[str]   = None
-
-
-class UpdateBuyerStats(BaseModel):
-    total_orders:   Optional[int] = None
-    total_spent:    Optional[int] = None
-    wishlist_count: Optional[int] = None
+    def not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("Comment cannot be empty")
+        return v.strip()
