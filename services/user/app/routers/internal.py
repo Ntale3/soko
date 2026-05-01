@@ -9,7 +9,7 @@ import uuid
 router = APIRouter(tags=["Internal"], dependencies=[Depends(internal_only)])
 
 
-@router.post("", status_code=201)
+@router.post("/", status_code=201)
 def create_user(payload: CreateUserPayload, db: Session = Depends(get_db)):
     profile = UserProfile(
         id=uuid.UUID(payload.id),
