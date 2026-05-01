@@ -2,11 +2,10 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.config.dependencies import internal_only
 from app.db.database import get_db
 from app.models.produce import Listing, ListingStatus
-from app.schemas.schemas import StockUpdatePayload
-
+from app.schemas.produce import StockUpdatePayload
+from app.core.dependencies import internal_only
 router = APIRouter(tags=["Internal"], dependencies=[Depends(internal_only)])
 
 
