@@ -131,7 +131,7 @@ async def update_buyer_stats(buyer_id: str, total: float):
 
 
 # ── Buyer only — place order (checkout)
-@router.post("", response_model=OrderOut, status_code=201,
+@router.post("/", response_model=OrderOut, status_code=201,
              dependencies=[Depends(buyer_only)])
 async def checkout(
     payload: CheckoutPayload,

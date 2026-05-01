@@ -14,6 +14,7 @@ app = FastAPI(
     title="Soko Blog Service",
     version="1.0.0",
     lifespan=lifespan,
+    root_path="/posts",
 )
 
 app.include_router(posts.router,    prefix="/posts")
