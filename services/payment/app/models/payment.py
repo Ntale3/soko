@@ -18,6 +18,7 @@ class PaymentStatus(str, enum.Enum):
 
 
 class PaymentMethodType(str, enum.Enum):
+    pesapal          = "pesapal"
     mobile_money     = "mobile_money"
     cash_on_delivery = "cash_on_delivery"
     bank_transfer    = "bank_transfer"
