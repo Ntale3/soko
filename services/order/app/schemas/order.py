@@ -13,6 +13,7 @@ class OrderStatus(str, Enum):
 
 
 class PaymentMethodType(str, Enum):
+    pesapal          = "pesapal"
     mobile_money     = "mobile_money"
     cash_on_delivery = "cash_on_delivery"
     bank_transfer    = "bank_transfer"
@@ -107,6 +108,7 @@ class OrderOut(BaseModel):
     createdAt:         str
     updatedAt:         str
     estimatedDelivery: Optional[str] = None
+    paymentUrl:        Optional[str] = None   # PesaPal redirect — frontend uses to redirect buyer
 
 
 # ── Order summary for history list (lighter than full OrderOut)
